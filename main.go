@@ -66,7 +66,13 @@ func mainInner() error {
 	}
 
 	http.Handle("/metrics", promhttp.Handler())
-	http.Handle("/data/report", http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+	http.Handle("/data/report/", http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if request.Method != http.MethodPost {
+			zap.S().Infof("received request: %v", request.RequestURI)
+			zap.S().Infof("received headers: %v", request.Header.Clone())
+			writer.WriteHeader(http.StatusMethodNotAllowed)
+			return
+		}
 		data, err := io.ReadAll(request.Body)
 		if err != nil {
 			zap.S().Errorw("failed to read body stream", "err", err)
