@@ -104,7 +104,7 @@ func mainInner() error {
 		}
 
 		// drop some fields we know aren't needed
-		for _, s := range []string{"dateutc", "PASSKEY", "model", "stationtype"} {
+		for _, s := range []string{"dateutc", "PASSKEY", "model", "stationtype", "freq"} {
 			values.Del(s)
 		}
 
