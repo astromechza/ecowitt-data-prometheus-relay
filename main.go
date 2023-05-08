@@ -1,15 +1,19 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"flag"
 	"fmt"
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promauto"
+	"go.uber.org/zap"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
+	"strconv"
 	"time"
-
-	"go.uber.org/zap"
 
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
@@ -28,7 +32,7 @@ func mainInner() error {
 	fs := flag.NewFlagSet(os.Args[0], flag.ExitOnError)
 	debugFlag := fs.Bool("debug", false, "Show debug logs")
 	configFlag := fs.String("config", "/config.json", "Json account config file (default: /config.json)")
-	updateInterval := fs.Duration("interval", time.Minute*30, "Interval to scan ovo (default: 30m)")
+	ttl := fs.Duration("ttl", -1, "TTL before the app restarts (default no restart)")
 
 	fs.Usage = func() {
 		_, _ = fmt.Fprint(os.Stderr, mainUsage)
@@ -41,9 +45,6 @@ func mainInner() error {
 		fs.Usage()
 		_, _ = fmt.Fprintf(os.Stderr, "\n")
 		return fmt.Errorf("no positional arguments expected")
-	}
-	if *updateInterval < time.Second*10 {
-		return fmt.Errorf("update interval must be at least 10 seconds")
 	}
 
 	logger, _ := zap.NewProduction()
@@ -65,6 +66,8 @@ func mainInner() error {
 		return err
 	}
 
+	gauges := make(map[string]prometheus.Gauge)
+
 	http.Handle("/metrics", promhttp.Handler())
 	http.Handle("/data/report/", http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		if request.Method != http.MethodPost {
@@ -83,6 +86,53 @@ func mainInner() error {
 		zap.S().Infof("received headers: %v", request.Header.Clone())
 		zap.S().Infof("received report: '%v'", string(data))
 		writer.WriteHeader(http.StatusOK)
+
+		values, err := url.ParseQuery(string(data))
+		if err != nil {
+			zap.S().Warnf("failed to parse as url encoded body: %v", err)
+			return
+		}
+
+		// capture model and station
+		modelField := values.Get("model")
+		if modelField == "" {
+			modelField = "unknown"
+		}
+		stationField := values.Get("stationtype")
+		if stationField == "" {
+			stationField = "unknown"
+		}
+
+		// drop some fields we know aren't needed
+		for _, s := range []string{"dateutc", "PASSKEY", "model", "stationtype"} {
+			values.Del(s)
+		}
+
+		// construct gauges and emit values
+		for left, right := range values {
+
+			rightValue, err := strconv.ParseFloat(right[0], 64)
+			if err != nil {
+				zap.S().Warnf("failed to parse numeric value for %s: '%s'", left, right)
+				continue
+			}
+
+			gauge, ok := gauges[left]
+			if !ok {
+				gauge = promauto.NewGauge(prometheus.GaugeOpts{
+					Name:      left + "_raw",
+					Namespace: "ecowitt_relay",
+					ConstLabels: map[string]string{
+						"model":       modelField,
+						"stationType": stationField,
+					},
+				})
+				gauges[left] = gauge
+			}
+
+			gauge.Set(rightValue)
+		}
+
 	}))
 	http.Handle("/", http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		zap.S().Infof("received request: %v", request.RequestURI)
@@ -90,6 +140,26 @@ func mainInner() error {
 		writer.WriteHeader(http.StatusNotFound)
 	}))
 	addr := ":8080"
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	if int(*ttl) > 0 {
+		zap.S().Infof("server will exit after %v", *ttl)
+		go func() {
+			timer := time.NewTimer(*ttl)
+			select {
+			case <-timer.C:
+				zap.L().Info("ttl expired")
+				os.Exit(1)
+				return
+			case <-ctx.Done():
+				zap.L().Info("closing background routine")
+				return
+			}
+		}()
+	}
+
 	zap.S().Infow("starting server", "address", addr)
 	if err := http.ListenAndServe(addr, nil); err != nil {
 		return err
