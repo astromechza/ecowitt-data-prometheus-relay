@@ -78,6 +78,11 @@ func mainInner() error {
 		zap.S().Infof("received report: '%v'", string(data))
 		writer.WriteHeader(http.StatusOK)
 	}))
+	http.Handle("/", http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		zap.S().Infof("received request: %v", request.RequestURI)
+		zap.S().Infof("received headers: %v", request.Header.Clone())
+		writer.WriteHeader(http.StatusNotFound)
+	}))
 	addr := ":8080"
 	zap.S().Infow("starting server", "address", addr)
 	if err := http.ListenAndServe(addr, nil); err != nil {
