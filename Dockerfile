@@ -9,5 +9,5 @@ FROM scratch
 USER 1001
 COPY --from=builder /ecowitt-data-prometheus-relay /
 COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
-COPY config-example.json /
+COPY config-example.json /config.json
 ENTRYPOINT ["/ecowitt-data-prometheus-relay"]
