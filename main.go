@@ -3,19 +3,19 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"github.com/prometheus/client_golang/prometheus"
-	"github.com/prometheus/client_golang/prometheus/promauto"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"go.uber.org/zap"
 	"io"
 	"net/http"
 	"net/url"
 	"os"
 	"strconv"
+	"sync/atomic"
 	"time"
-
-	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
 const mainUsage = `ecowitt-data-prometheus-relay accepts a payload from an ecowitt weather station and presents the
@@ -66,7 +66,7 @@ func mainInner() error {
 		return err
 	}
 
-	gauges := make(map[string]prometheus.Gauge)
+	counter := int64(0)
 
 	http.Handle("/metrics", promhttp.Handler())
 	http.Handle("/data/report/", http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
@@ -102,37 +102,29 @@ func mainInner() error {
 		if stationField == "" {
 			stationField = "unknown"
 		}
+		sourceIp := request.Header.Get("X-Real-IP")
+		if sourceIp == "" {
+			sourceIp = "unknown"
+		}
 
 		// drop some fields we know aren't needed
 		for _, s := range []string{"dateutc", "PASSKEY", "model", "stationtype", "freq"} {
 			values.Del(s)
 		}
 
+		incrementReportCount(modelField, stationField, sourceIp)
+
 		// construct gauges and emit values
 		for left, right := range values {
-
 			rightValue, err := strconv.ParseFloat(right[0], 64)
 			if err != nil {
 				zap.S().Warnf("failed to parse numeric value for %s: '%s'", left, right)
 				continue
 			}
-
-			gauge, ok := gauges[left]
-			if !ok {
-				gauge = promauto.NewGauge(prometheus.GaugeOpts{
-					Name:      left + "_raw",
-					Namespace: "ecowitt_relay",
-					ConstLabels: map[string]string{
-						"model":       modelField,
-						"stationType": stationField,
-					},
-				})
-				gauges[left] = gauge
-			}
-
-			gauge.Set(rightValue)
+			updateGauge(modelField, stationField, sourceIp, left, rightValue)
 		}
 
+		atomic.AddInt64(&counter, 1)
 	}))
 	http.Handle("/", http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		zap.S().Infof("received request: %v", request.RequestURI)
@@ -145,14 +137,25 @@ func mainInner() error {
 	defer cancel()
 
 	if int(*ttl) > 0 {
-		zap.S().Infof("server will exit after %v", *ttl)
 		go func() {
-			timer := time.NewTimer(*ttl)
+			lastIncrement := time.Now()
+			lastCount := atomic.LoadInt64(&counter)
+			timer := time.NewTicker(time.Second)
 			select {
 			case <-timer.C:
-				zap.L().Info("ttl expired")
-				os.Exit(1)
-				return
+				count := atomic.LoadInt64(&counter)
+				if count > 0 {
+					if count == lastCount {
+						if time.Since(lastIncrement) > *ttl {
+							zap.L().Info("ttl expired with no reports")
+							os.Exit(1)
+							return
+						}
+					} else {
+						lastIncrement = time.Now()
+						lastCount = count
+					}
+				}
 			case <-ctx.Done():
 				zap.L().Info("closing background routine")
 				return
@@ -165,6 +168,48 @@ func mainInner() error {
 		return err
 	}
 	return nil
+}
+
+func updateGauge(model, station, sourceIp, key string, value float64) {
+	gauge := prometheus.NewGauge(prometheus.GaugeOpts{
+		Name:      key + "_raw",
+		Namespace: "ecowitt_relay",
+		ConstLabels: map[string]string{
+			"source_ip":   sourceIp,
+			"model":       model,
+			"stationType": station,
+		},
+	})
+	if err := prometheus.DefaultRegisterer.Register(gauge); err != nil {
+		if conflict := new(prometheus.AlreadyRegisteredError); errors.As(err, conflict) {
+			gauge = conflict.ExistingCollector.(prometheus.Gauge)
+		} else {
+			zap.L().Fatal("failed to register counter", zap.Error(err))
+		}
+	}
+
+	gauge.Set(value)
+}
+
+func incrementReportCount(model, station, sourceIp string) {
+	counter := prometheus.NewCounter(prometheus.CounterOpts{
+		Name:      "report_count",
+		Namespace: "ecowitt_relay",
+		ConstLabels: map[string]string{
+			"source_ip":   sourceIp,
+			"model":       model,
+			"stationType": station,
+		},
+	})
+	if err := prometheus.DefaultRegisterer.Register(counter); err != nil {
+		if conflict := new(prometheus.AlreadyRegisteredError); errors.As(err, conflict) {
+			counter = conflict.ExistingCollector.(prometheus.Counter)
+		} else {
+			zap.L().Fatal("failed to register counter", zap.Error(err))
+		}
+	}
+
+	counter.Inc()
 }
 
 func main() {
