@@ -11,7 +11,6 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"path/filepath"
 	"strconv"
 	"sync/atomic"
 	"time"
@@ -41,7 +40,8 @@ type lastReport struct {
 // relay holds shared state for the HTTP handlers.
 type relay struct {
 	reg        prometheus.Registerer
-	lastReport atomic.Value // stores *lastReport
+	counter    atomic.Int64  // counts successful report POSTs; used by TTL goroutine
+	lastReport atomic.Value  // stores *lastReport
 }
 
 func (r *relay) handleReport(w http.ResponseWriter, req *http.Request) {
@@ -60,14 +60,16 @@ func (r *relay) handleReport(w http.ResponseWriter, req *http.Request) {
 	zap.S().Infof("received request: %v", req.RequestURI)
 	zap.S().Infof("received headers: %v", req.Header.Clone())
 	zap.S().Infof("received report: '%v'", string(data))
-	r.lastReport.Store(&lastReport{body: data, headers: req.Header.Clone()})
-	w.WriteHeader(http.StatusOK)
 
 	values, err := url.ParseQuery(string(data))
 	if err != nil {
 		zap.S().Warnf("failed to parse as url encoded body: %v", err)
+		w.WriteHeader(http.StatusBadRequest)
 		return
 	}
+
+	r.lastReport.Store(&lastReport{body: data, headers: req.Header.Clone()})
+	w.WriteHeader(http.StatusOK)
 
 	modelField := values.Get("model")
 	if modelField == "" {
@@ -91,21 +93,34 @@ func (r *relay) handleReport(w http.ResponseWriter, req *http.Request) {
 	for left, right := range values {
 		rightValue, err := strconv.ParseFloat(right[0], 64)
 		if err != nil {
-			zap.S().Warnf("failed to parse numeric value for %s: '%s'", left, right)
+			zap.S().Warnf("failed to parse numeric value for %s: '%s'", left, right[0])
 			continue
 		}
 		r.updateGauge(modelField, stationField, sourceIP, left, rightValue)
 	}
+
+	r.counter.Add(1)
 }
 
-func (r *relay) handleLast(w http.ResponseWriter, _ *http.Request) {
+func (r *relay) handleLast(w http.ResponseWriter, req *http.Request) {
+	if req.Method != http.MethodGet && req.Method != http.MethodHead {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
 	lr, ok := r.lastReport.Load().(*lastReport)
 	if !ok || lr == nil {
 		w.WriteHeader(http.StatusNotFound)
 		return
 	}
+	// Replay original request headers, excluding sensitive ones.
+	// Note: /last is intended for trusted-network debugging only.
 	for k, vals := range lr.headers {
-		w.Header().Set("X-Original-"+k, vals[0])
+		if http.CanonicalHeaderKey(k) == "Authorization" {
+			continue
+		}
+		for _, v := range vals {
+			w.Header().Add("X-Original-"+k, v)
+		}
 	}
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(lr.body)
@@ -178,7 +193,8 @@ func mainInner() error {
 
 	conf := &Config{}
 	zap.S().Infow("loading config", "config", *configFlag)
-	confFile, err := os.Open(filepath.Clean(*configFlag))
+	//nolint:gosec // path is operator-provided via CLI flag
+	confFile, err := os.Open(*configFlag)
 	if err != nil {
 		return err
 	}
@@ -195,17 +211,10 @@ func mainInner() error {
 
 	r := &relay{reg: prometheus.DefaultRegisterer}
 
-	counter := int64(0)
-
 	mux := http.NewServeMux()
 	mux.Handle("/metrics", promhttp.Handler())
 	mux.Handle("/last", http.HandlerFunc(r.handleLast))
-	mux.Handle("/data/report/", http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-		r.handleReport(w, req)
-		if req.Method == http.MethodPost {
-			atomic.AddInt64(&counter, 1)
-		}
-	}))
+	mux.Handle("/data/report/", http.HandlerFunc(r.handleReport))
 	mux.Handle("/", http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		zap.S().Infof("received request: %v", request.RequestURI)
 		zap.S().Infof("received headers: %v", request.Header.Clone())
@@ -220,13 +229,13 @@ func mainInner() error {
 	if int(*ttl) > 0 {
 		go func() {
 			lastIncrement := time.Now()
-			lastCount := atomic.LoadInt64(&counter)
+			lastCount := r.counter.Load()
 			ticker := time.NewTicker(time.Second)
 			defer ticker.Stop()
 			for {
 				select {
 				case <-ticker.C:
-					count := atomic.LoadInt64(&counter)
+					count := r.counter.Load()
 					if count > 0 {
 						if count == lastCount {
 							if time.Since(lastIncrement) > *ttl {
