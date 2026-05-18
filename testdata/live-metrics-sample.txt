@@ -1,0 +1,36 @@
+# Live /metrics snapshot from ecowitt-data-prometheus-relay running in hensteeth cluster
+# Captured: 2026-05-18
+# Version: v0.0.9
+# Device: GW1100A (stationType=GW1100A_V2.4.4), source_ip=192.168.4.6
+
+ecowitt_relay_baromabsin_raw{model="GW1100A",source_ip="192.168.4.6",stationType="GW1100A_V2.4.4"} 29.4
+ecowitt_relay_baromrelin_raw{model="GW1100A",source_ip="192.168.4.6",stationType="GW1100A_V2.4.4"} 29.4
+ecowitt_relay_batt2_raw{model="GW1100A",source_ip="192.168.4.6",stationType="GW1100A_V2.4.4"} 0
+ecowitt_relay_dailyrainin_raw{model="GW1100A",source_ip="192.168.4.6",stationType="GW1100A_V2.4.4"} 0.028
+ecowitt_relay_eventrainin_raw{model="GW1100A",source_ip="192.168.4.6",stationType="GW1100A_V2.4.4"} 0.098
+ecowitt_relay_heap_raw{model="GW1100A",source_ip="192.168.4.6",stationType="GW1100A_V2.4.4"} 24336
+ecowitt_relay_hourlyrainin_raw{model="GW1100A",source_ip="192.168.4.6",stationType="GW1100A_V2.4.4"} 0
+ecowitt_relay_humidity2_raw{model="GW1100A",source_ip="192.168.4.6",stationType="GW1100A_V2.4.4"} 52
+ecowitt_relay_humidity_raw{model="GW1100A",source_ip="192.168.4.6",stationType="GW1100A_V2.4.4"} 85
+ecowitt_relay_humidityin_raw{model="GW1100A",source_ip="192.168.4.6",stationType="GW1100A_V2.4.4"} 42
+ecowitt_relay_interval_raw{model="GW1100A",source_ip="192.168.4.6",stationType="GW1100A_V2.4.4"} 60
+ecowitt_relay_last24hrainin_raw{model="GW1100A",source_ip="192.168.4.6",stationType="GW1100A_V2.4.4"} 0.11
+ecowitt_relay_maxdailygust_raw{model="GW1100A",source_ip="192.168.4.6",stationType="GW1100A_V2.4.4"} 9.17
+ecowitt_relay_monthlyrainin_raw{model="GW1100A",source_ip="192.168.4.6",stationType="GW1100A_V2.4.4"} 1.429
+ecowitt_relay_rainratein_raw{model="GW1100A",source_ip="192.168.4.6",stationType="GW1100A_V2.4.4"} 0
+ecowitt_relay_report_count{model="GW1100A",source_ip="192.168.4.6",stationType="GW1100A_V2.4.4"} 11
+ecowitt_relay_runtime_raw{model="GW1100A",source_ip="192.168.4.6",stationType="GW1100A_V2.4.4"} 7.238406e+06
+ecowitt_relay_solarradiation_raw{model="GW1100A",source_ip="192.168.4.6",stationType="GW1100A_V2.4.4"} 87.65
+ecowitt_relay_temp2f_raw{model="GW1100A",source_ip="192.168.4.6",stationType="GW1100A_V2.4.4"} 72.14
+ecowitt_relay_tempf_raw{model="GW1100A",source_ip="192.168.4.6",stationType="GW1100A_V2.4.4"} 52.52
+ecowitt_relay_tempinf_raw{model="GW1100A",source_ip="192.168.4.6",stationType="GW1100A_V2.4.4"} 80.6
+ecowitt_relay_totalrainin_raw{model="GW1100A",source_ip="192.168.4.6",stationType="GW1100A_V2.4.4"} 15.52
+ecowitt_relay_uv_raw{model="GW1100A",source_ip="192.168.4.6",stationType="GW1100A_V2.4.4"} 0
+ecowitt_relay_vpd_raw{model="GW1100A",source_ip="192.168.4.6",stationType="GW1100A_V2.4.4"} 0.06
+ecowitt_relay_weeklyrainin_raw{model="GW1100A",source_ip="192.168.4.6",stationType="GW1100A_V2.4.4"} 0.118
+ecowitt_relay_wh65batt_raw{model="GW1100A",source_ip="192.168.4.6",stationType="GW1100A_V2.4.4"} 0
+ecowitt_relay_winddir_avg10m_raw{model="GW1100A",source_ip="192.168.4.6",stationType="GW1100A_V2.4.4"} 145
+ecowitt_relay_winddir_raw{model="GW1100A",source_ip="192.168.4.6",stationType="GW1100A_V2.4.4"} 119
+ecowitt_relay_windgustmph_raw{model="GW1100A",source_ip="192.168.4.6",stationType="GW1100A_V2.4.4"} 2.24
+ecowitt_relay_windspeedmph_raw{model="GW1100A",source_ip="192.168.4.6",stationType="GW1100A_V2.4.4"} 1.12
+ecowitt_relay_yearlyrainin_raw{model="GW1100A",source_ip="192.168.4.6",stationType="GW1100A_V2.4.4"} 15.52
