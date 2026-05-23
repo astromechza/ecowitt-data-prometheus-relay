@@ -17,9 +17,24 @@ The Ecowitt gateway POSTs sensor data to a configurable HTTP endpoint at a regul
 
 ---
 
+## Hardware inventory (this deployment)
+
+| Device | Model | Channel | Role | Status (2026-05-23) |
+|---|---|---|---|---|
+| GW1100 | Ecowitt GW1100 | — | Wi-Fi gateway + indoor sensors | ✅ Online, IP `<gateway-ip>` |
+| Indoor console | Ecowitt WS2910 | — | LCD display console; relays WS69 RF data to GW1100 | ✅ Online |
+| Outdoor array | Ecowitt WS69 | — | 7-in-1: wind/rain/temp/humidity/UV/solar | ⚠️ Offline since 2026-05-19 (hardware failure) |
+| Temp/humidity | Ecowitt WH31 | CH2 | Extra indoor/sheltered temp+humidity | ✅ Connected, battery normal |
+| Air quality | Ecowitt WH45 | — | PM2.5, PM10, CO₂, temp/humidity | ❌ Not connected (unplugged) |
+| Soil moisture | Ecowitt WH51 × 3 | Soil CH1/2/3 | Soil moisture % | ❌ All disconnected (dead batteries) |
+
+Note: `stationtype` in the payload reports as `GW1100A_V2.4.x` — the `A` suffix is a firmware/regional variant designation, not a different hardware model.
+
+---
+
 ## Sample Report
 
-Captured from a live GW1100A device (firmware V2.4.5) on 2026-05-18:
+Captured from a live GW1100 device on 2026-05-18. WS69 and WH31 CH2 both online; WH45 and WH51s offline.
 
 ```
 PASSKEY=xxxxxxxxxxx&stationtype=GW1100A_V2.4.5&runtime=3728&heap=24412
@@ -63,7 +78,9 @@ PASSKEY=xxxxxxxxxxx&stationtype=GW1100A_V2.4.5&runtime=3728&heap=24412
 | `tempinf` | °F | Indoor temperature |
 | `humidityin` | % RH | Indoor relative humidity |
 
-### Outdoor sensors (WH65 array — channel 1)
+### Outdoor sensors (WS69 array)
+
+The WS69 is a 7-in-1 outdoor sensor array derived from the WH65 sensor family. The field name prefix `wh65` in `wh65batt` is inherited from that lineage — the actual device in this deployment is a WS69.
 
 | Field | Unit | Notes |
 |---|---|---|
@@ -100,40 +117,68 @@ Note: if `baromrelin == baromabsin` the altitude correction is set to zero in th
 | `yearlyrainin` | in | Accumulation since Jan 1 |
 | `totalrainin` | in | Lifetime total (resets with yearlyrainin annually) |
 
-### Additional sensor (channel 2 — WH31/WH51/etc)
-
-| Field | Unit | Notes |
-|---|---|---|
-| `temp2f` | °F | Secondary sensor temperature |
-| `humidity2` | % RH | Secondary sensor humidity |
-
-In the sample setup, channel 2 reads ~72°F / 52% RH while outdoor is 51°F / 93% — likely a greenhouse or garage sensor.
-
 ### Atmospheric derived
 
 | Field | Unit | Notes |
 |---|---|---|
 | `vpd` | kPa | Vapor Pressure Deficit (used in agriculture/growing) |
 
+### Numbered channel sensors (WH31, WH51, etc.)
+
+Channel sensors append a digit to field names. Channel numbering for temp/humidity sensors (WH31) is independent from soil sensor channel numbering (WH51).
+
+#### WH31 temp/humidity (CH2 in this deployment)
+
+| Field | Unit | Notes |
+|---|---|---|
+| `temp2f` | °F | CH2 temperature — WH31 sensor, location indoors/sheltered |
+| `humidity2` | % RH | CH2 humidity |
+
+In this deployment CH2 reads ~72°F / 52% RH (indoor/sheltered) vs outdoor 51°F / 93%.
+
+#### WH51 soil moisture (Soil CH1/2/3 in this deployment — currently offline)
+
+| Field | Unit | Notes |
+|---|---|---|
+| `soilmoisture1` / `2` / `3` | % | Volumetric soil moisture percentage |
+| `soilad1` / `2` / `3` | raw | Raw ADC value from soil sensor |
+| `soilbatt1` / `2` / `3` | V | Soil sensor battery voltage (not a boolean flag — actual voltage) |
+
+#### WH45 air quality (currently offline/unplugged)
+
+| Field | Unit | Notes |
+|---|---|---|
+| `pm25` | µg/m³ | PM2.5 particulate concentration |
+| `pm25_24h` | µg/m³ | 24-hour average PM2.5 |
+| `pm10` | µg/m³ | PM10 particulate concentration |
+| `pm10_24h` | µg/m³ | 24-hour average PM10 |
+| `co2` | ppm | CO₂ concentration (needs ~10 min warm-up for stable reading) |
+| `co2_24h` | ppm | 24-hour average CO₂ |
+
+WH45 also reports its own temp, humidity, and battery via fields that may overlap with channel numbering depending on gateway firmware version.
+
 ### Battery status
 
-Battery fields are **boolean flags**, not voltages.
+Battery fields are **boolean flags**, not voltages (exception: WH51 `soilbattN` is an actual voltage).
 
 | Field | Sensor | 0 = OK | 1 = Low |
 |---|---|---|---|
-| `wh65batt` | WH65 outdoor array | ✓ | low battery |
-| `batt2` | Channel 2 sensor | ✓ | low battery |
+| `wh65batt` | WS69 outdoor array (inherits WH65 family naming) | ✓ | low battery |
+| `batt2` | CH2 sensor (WH31 in this deployment) | ✓ | low battery |
 
 ---
 
-## Device Models
+## Device models
 
-| Model | Type | Config method |
-|---|---|---|
-| GW1100 / GW1100A | Wi-Fi gateway with built-in indoor sensors | Web browser UI |
-| GW1000 | Wi-Fi gateway with built-in sensors (older) | WSView mobile app |
-
-The `A` suffix denotes a regional variant (frequency band).
+| Model | Type | Config method | Notes |
+|---|---|---|---|
+| GW1100 | Wi-Fi gateway + built-in indoor sensors | Web browser UI at `http://<ip>/` | Reports as `GW1100A` in stationtype |
+| GW1000 | Wi-Fi gateway + built-in sensors (older) | WSView mobile app | |
+| WS2910 | Indoor LCD console/display | Pairs to gateway via RF relay | Receives WS69 RF; relays to GW1100 |
+| WS69 | 7-in-1 outdoor sensor array | Pairs via RF to WS2910 console | Derived from WH65 family; solar + AA battery backup |
+| WH31 / WN31 | Temp + humidity sensor | Pairs to gateway via RF | Multi-channel, LCD display |
+| WH51 | Soil moisture sensor | Pairs to gateway via RF | 2× AA battery; resets on battery swap, needs re-pairing |
+| WH45 | Air quality (PM2.5/PM10/CO₂) | Pairs to gateway via RF | AC-powered; 868 MHz (EU); CO₂ needs ~10 min warm-up |
 
 ---
 

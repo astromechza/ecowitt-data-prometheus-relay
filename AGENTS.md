@@ -24,6 +24,15 @@ See [`docs/internal/ecowitt-protocol.md`](docs/internal/ecowitt-protocol.md) for
 
 `testdata/live-metrics-sample.txt` — snapshot of `/metrics` output from the live GW1100A deployment (v0.0.9, 2026-05-18).
 
+## Known bugs
+
+### Stale value flatline
+- **Symptom:** When an individual sensor goes offline, the relay holds the last received gauge value indefinitely. The metric appears "frozen" in Grafana.
+- **Observed:** WS69 outdoor array last reported ~2026-05-19T13:50; `tempf`, wind, rain etc. flatlined after that.
+- **Root cause:** The Ecowitt gateway continues POSTing reports even when an individual RF sensor (e.g. WS69) goes offline — it includes the last-known field values for that sensor in each report. The relay dutifully sets those gauges to the same stale value on every POST.
+- **What `-ttl` actually does:** The `-ttl` flag is a **process-level watchdog**, not per-metric expiry. If no station POST arrives within the TTL window, the process calls `os.Exit(1)` so that Kubernetes can restart the pod (and start fresh with no gauges). It does NOT expire or drop individual stale metrics.
+- **Fix needed:** Per-metric staleness tracking, e.g. a timestamp per gauge and a background scrubber that unregisters gauges not updated within some window. Requires significant redesign.
+
 ## Open questions / future work
 
 - Whether to drop device diagnostic fields (`runtime`, `heap`, `interval`) from metrics
