@@ -21,7 +21,7 @@ The Ecowitt gateway POSTs sensor data to a configurable HTTP endpoint at a regul
 
 | Device | Model | Channel | Role | Status (2026-05-23) |
 |---|---|---|---|---|
-| GW1100 | Ecowitt GW1100 | — | Wi-Fi gateway + indoor sensors | ✅ Online, IP `192.168.4.6` |
+| GW1100 | Ecowitt GW1100 | — | Wi-Fi gateway + indoor sensors | ✅ Online, IP `<gateway-ip>` |
 | Indoor console | Ecowitt WS2910 | — | LCD display console; relays WS69 RF data to GW1100 | ✅ Online |
 | Outdoor array | Ecowitt WS69 | — | 7-in-1: wind/rain/temp/humidity/UV/solar | ⚠️ Offline since 2026-05-19 (hardware failure) |
 | Temp/humidity | Ecowitt WH31 | CH2 | Extra indoor/sheltered temp+humidity | ✅ Connected, battery normal |
@@ -34,7 +34,7 @@ Note: `stationtype` in the payload reports as `GW1100A_V2.4.x` — the `A` suffi
 
 ## Sample Report
 
-Captured from a live GW1100 device (firmware V2.4.5, stationtype=GW1100A) on 2026-05-18. WS69 and WH31 CH2 both online; WH45 and WH51s offline.
+Captured from a live GW1100 device on 2026-05-18. WS69 and WH31 CH2 both online; WH45 and WH51s offline.
 
 ```
 PASSKEY=xxxxxxxxxxx&stationtype=GW1100A_V2.4.5&runtime=3728&heap=24412

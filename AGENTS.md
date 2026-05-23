@@ -27,10 +27,11 @@ See [`docs/internal/ecowitt-protocol.md`](docs/internal/ecowitt-protocol.md) for
 ## Known bugs
 
 ### Stale value flatline
-- **Symptom:** When a sensor stops reporting, the relay holds the last received value indefinitely instead of emitting no data / NaN. The gauge appears "frozen" in Grafana.
-- **Observed:** WS2910 last reported ~2026-05-19T13:50; relay flatlined at ~13.9°C after that.
-- **Root cause:** Relay stores last value in-memory. The `-ttl` flag is supposed to expire stale metrics after the given duration, but the TTL counter appears to reset on any upstream Prometheus scrape rather than on new station reports, so the expiry never fires in practice.
-- **Fix needed:** Audit TTL logic in `mainInner`; counter should only increment on successful station POSTs (already fixed in `handleReport`), but verify the TTL goroutine correctly drops metrics after one interval with no new reports.
+- **Symptom:** When an individual sensor goes offline, the relay holds the last received gauge value indefinitely. The metric appears "frozen" in Grafana.
+- **Observed:** WS69 outdoor array last reported ~2026-05-19T13:50; `tempf`, wind, rain etc. flatlined after that.
+- **Root cause:** The Ecowitt gateway continues POSTing reports even when an individual RF sensor (e.g. WS69) goes offline — it includes the last-known field values for that sensor in each report. The relay dutifully sets those gauges to the same stale value on every POST.
+- **What `-ttl` actually does:** The `-ttl` flag is a **process-level watchdog**, not per-metric expiry. If no station POST arrives within the TTL window, the process calls `os.Exit(1)` so that Kubernetes can restart the pod (and start fresh with no gauges). It does NOT expire or drop individual stale metrics.
+- **Fix needed:** Per-metric staleness tracking, e.g. a timestamp per gauge and a background scrubber that unregisters gauges not updated within some window. Requires significant redesign.
 
 ## Open questions / future work
 
