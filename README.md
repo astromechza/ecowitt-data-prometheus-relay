@@ -23,6 +23,20 @@ ecowitt-data-prometheus-relay \
   --ttl 5m                  # exit if no reports received for this duration (for pod restart)
 ```
 
+## Releasing
+
+CI runs vet/test/build on every push and PR. Docker images are published via [GoReleaser](https://goreleaser.com/) when a `v*` tag is pushed:
+
+```bash
+git tag v0.0.16
+git push origin v0.0.16
+```
+
+GoReleaser creates a GitHub release, builds `linux/amd64` and `linux/arm64` binaries, and pushes a multi-arch Docker manifest to Docker Hub:
+
+- `docker.io/astromechza/ecowitt-data-prometheus-relay:v0.0.16`
+- `docker.io/astromechza/ecowitt-data-prometheus-relay:latest`
+
 ## Endpoints
 
 | Path | Method | Description |
