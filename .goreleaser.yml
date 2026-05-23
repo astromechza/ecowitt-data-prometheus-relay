@@ -27,6 +27,8 @@ dockers:
       - "docker.io/astromechza/ecowitt-data-prometheus-relay:{{ .Tag }}-amd64"
     dockerfile: Dockerfile
     use: buildx
+    extra_files:
+      - config-example.json
     build_flag_templates:
       - "--platform=linux/amd64"
   - id: arm64
@@ -36,6 +38,8 @@ dockers:
       - "docker.io/astromechza/ecowitt-data-prometheus-relay:{{ .Tag }}-arm64"
     dockerfile: Dockerfile
     use: buildx
+    extra_files:
+      - config-example.json
     build_flag_templates:
       - "--platform=linux/arm64"
 
