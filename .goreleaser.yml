@@ -25,7 +25,7 @@ dockers:
     goarch: amd64
     image_templates:
       - "docker.io/astromechza/ecowitt-data-prometheus-relay:{{ .Tag }}-amd64"
-    dockerfile: Dockerfile.release
+    dockerfile: Dockerfile
     use: buildx
     build_flag_templates:
       - "--platform=linux/amd64"
@@ -34,7 +34,7 @@ dockers:
     goarch: arm64
     image_templates:
       - "docker.io/astromechza/ecowitt-data-prometheus-relay:{{ .Tag }}-arm64"
-    dockerfile: Dockerfile.release
+    dockerfile: Dockerfile
     use: buildx
     build_flag_templates:
       - "--platform=linux/arm64"
