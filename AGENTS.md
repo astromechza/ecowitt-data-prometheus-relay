@@ -24,6 +24,14 @@ See [`docs/internal/ecowitt-protocol.md`](docs/internal/ecowitt-protocol.md) for
 
 `testdata/live-metrics-sample.txt` — snapshot of `/metrics` output from the live GW1100A deployment (v0.0.9, 2026-05-18).
 
+## Known bugs
+
+### Stale value flatline
+- **Symptom:** When a sensor stops reporting, the relay holds the last received value indefinitely instead of emitting no data / NaN. The gauge appears "frozen" in Grafana.
+- **Observed:** WS2910 last reported ~2026-05-19T13:50; relay flatlined at ~13.9°C after that.
+- **Root cause:** Relay stores last value in-memory. The `-ttl` flag is supposed to expire stale metrics after the given duration, but the TTL counter appears to reset on any upstream Prometheus scrape rather than on new station reports, so the expiry never fires in practice.
+- **Fix needed:** Audit TTL logic in `mainInner`; counter should only increment on successful station POSTs (already fixed in `handleReport`), but verify the TTL goroutine correctly drops metrics after one interval with no new reports.
+
 ## Open questions / future work
 
 - Whether to drop device diagnostic fields (`runtime`, `heap`, `interval`) from metrics
