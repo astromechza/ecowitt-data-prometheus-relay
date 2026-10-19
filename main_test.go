@@ -1,16 +1,23 @@
 package main
 
 import (
+	"bufio"
+	"bytes"
 	"context"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
+	"regexp"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
 	dto "github.com/prometheus/client_model/go"
+	"github.com/prometheus/common/expfmt"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -338,4 +345,104 @@ func TestHandleReport_InvalidFieldNameSkipped(t *testing.T) {
 	r, reg := newTestRelay()
 	postReport(r, url.Values{"bad\xffname": {"1"}, "tempf": {"60.0"}}.Encode(), nil)
 	require.NotNil(t, gatherMetric(t, reg, "ecowitt_relay_tempf_raw"))
+}
+
+// sampleLine matches series lines in testdata/live-metrics-sample.txt, e.g.
+// ecowitt_relay_tempf_raw{model="GW1100A",source_ip="192.168.4.6",stationType="GW1100A_V2.4.4"} 52.52
+var sampleLine = regexp.MustCompile(`^ecowitt_relay_(\w+)_raw\{model="([^"]+)",source_ip="([^"]+)",stationType="([^"]+)"\} (\S+)$`)
+
+// TestMetricsOutput_MatchesLiveSample replays the fields from a v0.0.9 /metrics snapshot and checks the
+// exposition output is identical, guarding metric names, labels, value formatting and report_count semantics
+// that the Grafana dashboard depends on.
+func TestMetricsOutput_MatchesLiveSample(t *testing.T) {
+	raw, err := os.ReadFile("testdata/live-metrics-sample.txt")
+	require.NoError(t, err)
+
+	var expected []string
+	body := url.Values{}
+	headers := map[string]string{}
+	reports := 0
+	sc := bufio.NewScanner(bytes.NewReader(raw))
+	for sc.Scan() {
+		line := sc.Text()
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		expected = append(expected, line)
+		if strings.HasPrefix(line, "ecowitt_relay_report_count{") {
+			_, err := fmt.Sscanf(line[strings.LastIndex(line, " ")+1:], "%d", &reports)
+			require.NoError(t, err)
+			continue
+		}
+		m := sampleLine.FindStringSubmatch(line)
+		require.NotNil(t, m, "unexpected sample line: %s", line)
+		body.Set(m[1], m[5])
+		body.Set("model", m[2])
+		body.Set("stationtype", m[4])
+		headers["X-Real-IP"] = m[3]
+	}
+	require.NoError(t, sc.Err())
+	require.Positive(t, reports)
+
+	r, reg := newTestRelay()
+	for range reports {
+		require.Equal(t, http.StatusOK, postReport(r, body.Encode(), headers).Code)
+	}
+
+	mfs, err := reg.Gather()
+	require.NoError(t, err)
+	var buf bytes.Buffer
+	for _, mf := range mfs {
+		_, err := expfmt.MetricFamilyToText(&buf, mf)
+		require.NoError(t, err)
+	}
+	var actual []string
+	for _, line := range strings.Split(strings.TrimSpace(buf.String()), "\n") {
+		if !strings.HasPrefix(line, "#") {
+			actual = append(actual, line)
+		}
+	}
+	assert.Equal(t, expected, actual)
+
+	for _, mf := range mfs {
+		want := dto.MetricType_GAUGE
+		if mf.GetName() == "ecowitt_relay_report_count" {
+			want = dto.MetricType_COUNTER
+		}
+		assert.Equal(t, want, mf.GetType(), mf.GetName())
+	}
+}
+
+// TestStationCollector_ConcurrentObserveAndCollect is meant for -race: reports land while scrapes expire entries.
+func TestStationCollector_ConcurrentObserveAndCollect(t *testing.T) {
+	c := newStationCollector(time.Nanosecond, time.Now)
+	reg := prometheus.NewRegistry()
+	reg.MustRegister(c)
+
+	var wg sync.WaitGroup
+	for i := range 8 {
+		wg.Go(func() {
+			ls := stationLabels{model: "GW1100A", station: "v1", sourceIP: fmt.Sprintf("10.0.0.%d", i)}
+			for j := range 200 {
+				c.observe(ls, map[string]float64{"tempf": float64(j)})
+			}
+		})
+		wg.Go(func() {
+			for range 50 {
+				_, err := reg.Gather()
+				assert.NoError(t, err)
+			}
+		})
+	}
+	wg.Wait()
+}
+
+func TestHandleReport_OmittedFieldKeepsLastValue(t *testing.T) {
+	r, reg := newTestRelay()
+	postReport(r, url.Values{"tempf": {"60.0"}, "humidity": {"40"}}.Encode(), nil)
+	postReport(r, url.Values{"tempf": {"61.0"}}.Encode(), nil)
+
+	assert.Equal(t, 61.0, gatherMetric(t, reg, "ecowitt_relay_tempf_raw").GetGauge().GetValue())
+	// Known limitation (AGENTS.md "Stale value flatline"): only whole label sets expire, not individual fields.
+	assert.Equal(t, 40.0, gatherMetric(t, reg, "ecowitt_relay_humidity_raw").GetGauge().GetValue())
 }
