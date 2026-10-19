@@ -39,9 +39,9 @@ type lastReport struct {
 
 // relay holds shared state for the HTTP handlers.
 type relay struct {
-	reg        prometheus.Registerer
-	counter    atomic.Int64  // counts successful report POSTs; used by TTL goroutine
-	lastReport atomic.Value  // stores *lastReport
+	stations   *stationCollector
+	counter    atomic.Int64 // counts successful report POSTs; used by TTL goroutine
+	lastReport atomic.Value // stores *lastReport
 }
 
 func (r *relay) handleReport(w http.ResponseWriter, req *http.Request) {
@@ -88,16 +88,16 @@ func (r *relay) handleReport(w http.ResponseWriter, req *http.Request) {
 		values.Del(s)
 	}
 
-	r.incrementReportCount(modelField, stationField, sourceIP)
-
+	gauges := make(map[string]float64, len(values))
 	for left, right := range values {
 		rightValue, err := strconv.ParseFloat(right[0], 64)
 		if err != nil {
 			zap.S().Warnf("failed to parse numeric value for %s: '%s'", left, right[0])
 			continue
 		}
-		r.updateGauge(modelField, stationField, sourceIP, left, rightValue)
+		gauges[left] = rightValue
 	}
+	r.stations.observe(stationLabels{model: modelField, station: stationField, sourceIP: sourceIP}, gauges)
 
 	r.counter.Add(1)
 }
@@ -126,51 +126,12 @@ func (r *relay) handleLast(w http.ResponseWriter, req *http.Request) {
 	_, _ = w.Write(lr.body)
 }
 
-func (r *relay) updateGauge(model, station, sourceIP, key string, value float64) {
-	gauge := prometheus.NewGauge(prometheus.GaugeOpts{
-		Name:      key + "_raw",
-		Namespace: "ecowitt_relay",
-		ConstLabels: map[string]string{
-			"source_ip":   sourceIP,
-			"model":       model,
-			"stationType": station,
-		},
-	})
-	if err := r.reg.Register(gauge); err != nil {
-		if conflict := new(prometheus.AlreadyRegisteredError); errors.As(err, conflict) {
-			gauge = conflict.ExistingCollector.(prometheus.Gauge)
-		} else {
-			zap.L().Fatal("failed to register gauge", zap.Error(err))
-		}
-	}
-	gauge.Set(value)
-}
-
-func (r *relay) incrementReportCount(model, station, sourceIP string) {
-	counter := prometheus.NewCounter(prometheus.CounterOpts{
-		Name:      "report_count",
-		Namespace: "ecowitt_relay",
-		ConstLabels: map[string]string{
-			"source_ip":   sourceIP,
-			"model":       model,
-			"stationType": station,
-		},
-	})
-	if err := r.reg.Register(counter); err != nil {
-		if conflict := new(prometheus.AlreadyRegisteredError); errors.As(err, conflict) {
-			counter = conflict.ExistingCollector.(prometheus.Counter)
-		} else {
-			zap.L().Fatal("failed to register counter", zap.Error(err))
-		}
-	}
-	counter.Inc()
-}
-
 func mainInner() error {
 	fs := flag.NewFlagSet(os.Args[0], flag.ExitOnError)
 	debugFlag := fs.Bool("debug", false, "Show debug logs")
 	configFlag := fs.String("config", "/config.json", "Json account config file (default: /config.json)")
 	ttl := fs.Duration("ttl", -1, "TTL before the app restarts (default no restart)")
+	metricTTL := fs.Duration("metric-ttl", 15*time.Minute, "Stop exporting a station label set not reported within this duration (0 disables)")
 
 	fs.Usage = func() {
 		_, _ = fmt.Fprint(os.Stderr, mainUsage)
@@ -209,7 +170,8 @@ func mainInner() error {
 		return err
 	}
 
-	r := &relay{reg: prometheus.DefaultRegisterer}
+	r := &relay{stations: newStationCollector(*metricTTL, time.Now)}
+	prometheus.MustRegister(r.stations)
 
 	mux := http.NewServeMux()
 	mux.Handle("/metrics", promhttp.Handler())
