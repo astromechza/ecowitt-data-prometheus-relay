@@ -8,7 +8,7 @@ So you can produce fun little dashboards like the following:
 
 ## How it works
 
-The Ecowitt gateway is configured to POST sensor data to `/data/report/` on this service every 60 seconds. The service parses the URL-encoded payload and registers each field as a Prometheus gauge under the `ecowitt_relay_` namespace, labelled by `model`, `stationType`, and `source_ip`.
+The Ecowitt gateway is configured to POST sensor data to `/data/report/` on this service every 60 seconds. The service parses the URL-encoded payload and registers each field as a Prometheus gauge under the `ecowitt_relay_` namespace, labelled by `model`, `stationType`, and `source_ip`. A label set that has not reported within `--metric-ttl` is dropped from `/metrics`, so a firmware update that changes `stationType` does not leave the old series frozen.
 
 A `GET /last` endpoint returns the verbatim body of the most recent station POST for debugging.
 
@@ -20,7 +20,8 @@ See [`docs/internal/ecowitt-protocol.md`](docs/internal/ecowitt-protocol.md) for
 ecowitt-data-prometheus-relay \
   --config /config.json \   # path to JSON config (currently unused, required)
   --debug \                 # verbose logging
-  --ttl 5m                  # exit if no reports received for this duration (for pod restart)
+  --ttl 5m \                # exit if no reports received for this duration (for pod restart)
+  --metric-ttl 15m          # stop exporting a label set not reported for this duration (default 15m, 0 disables)
 ```
 
 ## Releasing

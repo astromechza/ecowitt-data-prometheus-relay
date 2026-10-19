@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
 	dto "github.com/prometheus/client_model/go"
@@ -14,9 +15,21 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func newTestRelay() (*relay, *prometheus.Registry) {
+// fakeClock is a manually advanced clock for exercising expiry.
+type fakeClock struct{ t time.Time }
+
+func (c *fakeClock) now() time.Time          { return c.t }
+func (c *fakeClock) advance(d time.Duration) { c.t = c.t.Add(d) }
+
+func newTestRelayWithClock(ttl time.Duration, clock *fakeClock) (*relay, *prometheus.Registry) {
 	reg := prometheus.NewRegistry()
-	return &relay{reg: reg}, reg
+	r := &relay{stations: newStationCollector(ttl, clock.now)}
+	reg.MustRegister(r.stations)
+	return r, reg
+}
+
+func newTestRelay() (*relay, *prometheus.Registry) {
+	return newTestRelayWithClock(0, &fakeClock{t: time.Unix(0, 0)})
 }
 
 // gatherMetric finds the first metric matching name from the registry.
@@ -244,4 +257,85 @@ func TestHandleReport_ReportCounterIncrements(t *testing.T) {
 	m := gatherMetric(t, reg, "ecowitt_relay_report_count")
 	require.NotNil(t, m, "expected report_count counter")
 	assert.Equal(t, 2.0, m.GetCounter().GetValue())
+}
+
+// stationTypes returns the stationType label of every series of the named metric.
+func stationTypes(t *testing.T, g prometheus.Gatherer, name string) []string {
+	t.Helper()
+	mfs, err := g.Gather()
+	require.NoError(t, err)
+	var out []string
+	for _, mf := range mfs {
+		if mf.GetName() != name {
+			continue
+		}
+		for _, m := range mf.GetMetric() {
+			out = append(out, labelMap(m)["stationType"])
+		}
+	}
+	return out
+}
+
+func TestStationExpiry_OldLabelSetDroppedAfterTTL(t *testing.T) {
+	clock := &fakeClock{t: time.Unix(1_700_000_000, 0)}
+	r, reg := newTestRelayWithClock(15*time.Minute, clock)
+
+	postReport(r, url.Values{"tempf": {"60.0"}, "stationtype": {"GW1100A_V2.4.5"}}.Encode(), nil)
+	clock.advance(time.Minute)
+	// firmware update changes stationtype
+	postReport(r, url.Values{"tempf": {"61.0"}, "stationtype": {"GW1100A_V2.4.6"}}.Encode(), nil)
+
+	assert.ElementsMatch(t, []string{"GW1100A_V2.4.5", "GW1100A_V2.4.6"}, stationTypes(t, reg, "ecowitt_relay_tempf_raw"))
+
+	// old label set is exactly at the TTL: still exported
+	clock.advance(14 * time.Minute)
+	assert.Len(t, stationTypes(t, reg, "ecowitt_relay_report_count"), 2)
+
+	// past the TTL: old label set disappears from every metric, the fresh one stays
+	clock.advance(time.Second)
+	assert.Equal(t, []string{"GW1100A_V2.4.6"}, stationTypes(t, reg, "ecowitt_relay_tempf_raw"))
+	assert.Equal(t, []string{"GW1100A_V2.4.6"}, stationTypes(t, reg, "ecowitt_relay_report_count"))
+}
+
+func TestStationExpiry_ReportRefreshesLastSeen(t *testing.T) {
+	clock := &fakeClock{t: time.Unix(1_700_000_000, 0)}
+	r, reg := newTestRelayWithClock(15*time.Minute, clock)
+	body := url.Values{"tempf": {"60.0"}}.Encode()
+
+	postReport(r, body, nil)
+	clock.advance(10 * time.Minute)
+	postReport(r, body, nil)
+	clock.advance(10 * time.Minute)
+
+	m := gatherMetric(t, reg, "ecowitt_relay_report_count")
+	require.NotNil(t, m)
+	assert.Equal(t, 2.0, m.GetCounter().GetValue())
+}
+
+func TestStationExpiry_ReturningLabelSetStartsFresh(t *testing.T) {
+	clock := &fakeClock{t: time.Unix(1_700_000_000, 0)}
+	r, reg := newTestRelayWithClock(15*time.Minute, clock)
+
+	postReport(r, url.Values{"tempf": {"60.0"}, "humidity": {"40"}}.Encode(), nil)
+	clock.advance(time.Hour)
+	assert.Nil(t, gatherMetric(t, reg, "ecowitt_relay_report_count"))
+
+	postReport(r, url.Values{"tempf": {"70.0"}}.Encode(), nil)
+	assert.Equal(t, 1.0, gatherMetric(t, reg, "ecowitt_relay_report_count").GetCounter().GetValue())
+	assert.Equal(t, 70.0, gatherMetric(t, reg, "ecowitt_relay_tempf_raw").GetGauge().GetValue())
+	assert.Nil(t, gatherMetric(t, reg, "ecowitt_relay_humidity_raw"), "fields from the expired state should not return")
+}
+
+func TestStationExpiry_ZeroTTLNeverExpires(t *testing.T) {
+	clock := &fakeClock{t: time.Unix(1_700_000_000, 0)}
+	r, reg := newTestRelayWithClock(0, clock)
+	postReport(r, url.Values{"tempf": {"60.0"}}.Encode(), nil)
+	clock.advance(24 * time.Hour)
+	require.NotNil(t, gatherMetric(t, reg, "ecowitt_relay_tempf_raw"))
+}
+
+func TestHandleReport_InvalidFieldNameSkipped(t *testing.T) {
+	r, reg := newTestRelay()
+	postReport(r, url.Values{"bad\xffname": {"1"}, "tempf": {"60.0"}}.Encode(), nil)
+	require.NotNil(t, gatherMetric(t, reg, "ecowitt_relay_tempf_raw"))
 }

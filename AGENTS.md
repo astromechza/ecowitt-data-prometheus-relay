@@ -7,7 +7,8 @@ This is a Go HTTP service that receives Ecowitt weather station data POSTs and e
 ## Key design decisions
 
 - **Opt-out field filtering**: all URL-encoded fields become gauges except a known drop-list (`PASSKEY`, `dateutc`, `model`, `stationtype`, `freq`).
-- **Dynamic gauge registration**: gauges are registered on first receipt using `prometheus.AlreadyRegisteredError` to retrieve existing collectors on subsequent reports.
+- **Custom collector** (`collector.go`): `stationCollector` keeps the latest field values, report count and last-seen time per (`model`, `stationType`, `source_ip`) label set and emits const metrics on scrape. It is unchecked (empty `Describe`) because metric names come from the reported fields.
+- **Label-set expiry**: `-metric-ttl` (default 15m) drops a label set and all its series, including `report_count`, on the first scrape after it goes unreported for that long. This handles labels changing (e.g. firmware bumps `stationType`); a returning label set starts fresh.
 - **Labels**: `model`, `stationType`, `source_ip` on every metric.
 - **`/last` endpoint**: returns the verbatim body of the most recent station POST for debugging. `Authorization` header is stripped before replay. Intended for trusted-network use only.
 
@@ -31,7 +32,8 @@ See [`docs/internal/ecowitt-protocol.md`](docs/internal/ecowitt-protocol.md) for
 - **Observed:** WS69 outdoor array last reported ~2026-05-19T13:50; `tempf`, wind, rain etc. flatlined after that.
 - **Root cause:** The Ecowitt gateway continues POSTing reports even when an individual RF sensor (e.g. WS69) goes offline — it includes the last-known field values for that sensor in each report. The relay dutifully sets those gauges to the same stale value on every POST.
 - **What `-ttl` actually does:** The `-ttl` flag is a **process-level watchdog**, not per-metric expiry. If no station POST arrives within the TTL window, the process calls `os.Exit(1)` so that Kubernetes can restart the pod (and start fresh with no gauges). It does NOT expire or drop individual stale metrics.
-- **Fix needed:** Per-metric staleness tracking, e.g. a timestamp per gauge and a background scrubber that unregisters gauges not updated within some window. Requires significant redesign.
+- **Not fixed by `-metric-ttl`:** that expires whole label sets that stop reporting; here the label set keeps reporting with stale field values.
+- **Fix needed:** Per-field staleness tracking, e.g. a timestamp per gauge and a background scrubber that unregisters gauges not updated within some window. Requires significant redesign.
 
 ## Open questions / future work
 
